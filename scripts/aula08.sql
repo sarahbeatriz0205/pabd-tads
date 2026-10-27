@@ -103,7 +103,110 @@ for each row execute function check_rental_rate();
 update film set rental_rate = -5 where film_id = 1;
 select rental_rate from film where film_id = 1;
 
+-- Auditoria de alterações salariais
+drop table if exists audit_salary_changes;
+create table audit_salary_changes (
+    id serial primary key,
+    cpf_funcionario char(11) not null references funcionario(cpf),
+    old_salario numeric(7, 2),
+    new_salario numeric(7, 2),
+    change_date timestamptz default now(),
+    change_percent numeric(7, 2)
+);
+
+create or replace function log_salary_changes()
+    returns trigger
+    language plpgsql
+as $$
+declare
+    -- variable_name type;
+    -- variable_name table_name.column_name%type;
+    -- percent audit_salary_changes.change_percent%type;
+    percent numeric(7, 2);
+begin
+    if NEW.salario != OLD.salario then
+        percent = ((NEW.salario - OLD.salario) / OLD.salario) * 100;
+
+        insert into audit_salary_changes (cpf_funcionario, old_salario, new_salario, change_percent)
+        values (NEW.cpf, OLD.salario, NEW.salario, percent);
+    end if;
+
+    return new;
+end;
+$$;
+
+drop trigger if exists trg_log_salary_changes on funcionario;
+create trigger trg_log_salary_changes
+after update on funcionario
+for each row
+execute function log_salary_changes();
+
+-- Teste
+select * from audit_salary_changes;
+
+update funcionario set salario = 15000 where cpf = '11122233344';
+
+update funcionario set salario = 14995 where cpf = '22233344455';
+
+update funcionario set salario = 4995 where cpf = '22233344455';
+
+-- Uso de WHEN
+create or replace function log_salary_changes_when()
+    returns trigger
+    language plpgsql
+as $$
+declare -- declaração de variáveis em plpgsql
+    -- variable_name type;
+    -- variable_name table_name.column_name%type;
+    -- percent audit_salary_changes.change_percent%type;
+    percent numeric(7, 2);
+begin
+    percent = ((NEW.salario - OLD.salario) / OLD.salario) * 100;
+
+    insert into audit_salary_changes (cpf_funcionario, old_salario, new_salario, change_percent)
+    values (NEW.cpf, OLD.salario, NEW.salario, percent);
+
+    return new;
+end;
+$$;
+
+drop trigger if exists trg_log_salary_changes_when on funcionario;
+create trigger trg_log_salary_changes_when
+after update on funcionario
+for each row
+when (NEW.salario != OLD.salario) -- gatilho condicional: se for verdadeiro, executa a função
+execute function log_salary_changes_when();
+
 -- ==================================================
--- Exemplo 4 - AFTER UPDATE
+-- Exemplo 5 - BEFORE DELETE
+-- ==================================================
+
+-- Manutenção de integridade referencial (impedir a exclusão de cliente com pagamentos)
+create or replace function prevent_customer_del()
+    returns trigger
+    language plpgsql
+as $$
+begin
+    if exists (select 1 from payment where customer_id = OLD.customer_id) then
+        raise exception 'Não permitido excluir clientes com pagamentos (customer_id: %)', OLD.customer_id;
+    end if;
+
+    return old;
+end;
+$$;
+
+drop trigger if exists trg_prevent_customer_del on customer;
+create trigger trg_prevent_customer_del
+before delete on customer
+for each row
+execute function prevent_customer_del();
+
+-- Teste
+delete from customer where customer_id = 1;
+
+-- Triggers INSTEAD OF: gatilhos especiais que interceptam ações das views
+
+-- ==================================================
+-- Exemplo 5 - INSTEAD OF
 -- ==================================================
 
